@@ -31,6 +31,7 @@ class ConkySource(Source, PipeSink):
         self.conkyrc.write(
 """background no
 out_to_console yes
+out_to_x no
 update_interval 5.0
 total_run_times 0
 TEXT
