@@ -18,8 +18,23 @@
 from overkill.sinks import PipeSink
 from overkill.sources import Source
 from collections import namedtuple
+import os
 
 Variable = namedtuple("Variable", ['variable', 'required_args', 'optional_args'])
+
+TEMPLATE = """
+conky.config = {{
+    background = false,
+    out_to_console = true,
+    out_to_x = false,
+    no_buffers = true,
+    update_interval = 5.0,
+    total_run_times = 0,
+}}
+conky.text = [[
+{}
+]]
+"""
 
 class ConkySource(Source, PipeSink):
     restart = True
@@ -44,35 +59,34 @@ class ConkySource(Source, PipeSink):
 
     def on_start(self):
         import tempfile
-        self.conkyrc = tempfile.NamedTemporaryFile()
-        self.conkyrc.write(
-"""background no
-out_to_console yes
-out_to_x no
-no_buffers yes
-update_interval 5.0
-total_run_times 0
-TEXT
-""".encode('utf-8'))
-        self.conkyrc.flush()
+        self.conkyrc = tempfile.NamedTemporaryFile(prefix="overkill-conky-", suffix=".lua")
+        self.reconfigure()
         self.cmd = ["conky", "-c", self.conkyrc.name]
+
+    def reconfigure(self):
+        self.conkyrc.seek(0, os.SEEK_SET)
+        self.conkyrc.write(TEMPLATE.format("\t".join(
+            "%s:${%s}" % (sub, sub)
+            for sub in self.exporting
+        )).encode('utf-8'))
+        self.conkyrc.truncate()
+        self.conkyrc.flush()
+        if self._ready_to_signal:
+            self.proc.send_signal(1)
 
     def on_stop(self):
         self.conkyrc.close()
 
     def on_subscribe(self, subscriber, subscription):
-        if subscription not in self.exporting:
-            self.conkyrc.write(("%s:${%s}\t" % (subscription, subscription)).encode("utf-8"))
-            self.conkyrc.flush()
-            if self._ready_to_signal:
-                self.proc.send_signal(1)
+        self.exporting.add(subscription)
+        self.reconfigure()
 
     def handle_input(self, line):
-        self._ready_to_signal = True;
+        self._ready_to_signal = True
         if not line:
             return
         line = line.strip('\t')
-        try: 
+        try:
             updates = dict(part.split(':', 1) for part in line.split('\t'))
         except ValueError:
             return
